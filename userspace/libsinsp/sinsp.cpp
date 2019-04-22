@@ -1131,6 +1131,9 @@ int32_t sinsp::next(OUT sinsp_evt **puevt)
 		m_firstevent_ts = ts;
 	}
 
+	// process asynchronous tasks running in the background
+	tick();
+
 	//
 	// If required, retrieve the processes cpu from the kernel
 	//
@@ -1627,6 +1630,11 @@ void sinsp::set_cri_socket_path(const std::string& path)
 void sinsp::set_cri_timeout(int64_t timeout_ms)
 {
 	m_container_manager.set_cri_timeout(timeout_ms);
+}
+
+void sinsp::tick()
+{
+	m_container_manager.tick();
 }
 
 void sinsp::set_snaplen(uint32_t snaplen)

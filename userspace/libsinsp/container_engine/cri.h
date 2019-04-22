@@ -38,6 +38,9 @@ public:
 	static void set_cri_socket_path(const std::string& path);
 	static void set_cri_timeout(int64_t timeout_ms);
 	static void set_extra_queries(bool extra_queries);
+
+	// process pending async requests
+	static void tick(sinsp_container_manager* manager);
 };
 }
 }

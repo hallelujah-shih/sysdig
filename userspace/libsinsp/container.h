@@ -68,6 +68,7 @@ public:
 	void set_cri_extra_queries(bool extra_queries);
 	void set_cri_socket_path(const std::string& path);
 	void set_cri_timeout(int64_t timeout_ms);
+	void tick();
 	sinsp* get_inspector() { return m_inspector; }
 private:
 	string container_to_json(const sinsp_container_info& container_info);
@@ -79,6 +80,9 @@ private:
 	uint64_t m_last_flush_time_ns;
 	list<new_container_cb> m_new_callbacks;
 	list<remove_container_cb> m_remove_callbacks;
+
+	static const uint64_t m_tick_interval_ns = 100*1000*1000; // 100 ms
+	uint64_t m_next_tick_ns;
 
 	friend class test_helper;
 };

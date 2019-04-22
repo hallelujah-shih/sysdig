@@ -28,6 +28,7 @@ limitations under the License.
 #include "cri.pb.h"
 #include "cri.grpc.pb.h"
 
+#include "async_cgroup.h"
 #include "runc.h"
 #include "container_engine/mesos.h"
 #include <cri.h>
@@ -39,6 +40,14 @@ using namespace libsinsp::container_engine;
 using namespace libsinsp::runc;
 
 namespace {
+// how long do we wait
+constexpr uint64_t CGROUP_LOOKUP_DELAY_MS = 1000;
+
+// how long do we wait on cgroup lookup result before giving up
+// Note: this value includes the initial delay
+constexpr uint64_t CGROUP_MAX_DELAY_MS = 2000;
+libsinsp::async_cgroup::delayed_cgroup_lookup s_async_cgroups(0, CGROUP_MAX_DELAY_MS);
+
 bool parse_containerd(const runtime::v1alpha2::ContainerStatusResponse& status, sinsp_container_info *container, sinsp_threadinfo *tinfo)
 {
 	const auto &info_it = status.info().find("info");
@@ -115,6 +124,23 @@ bool parse_cri(sinsp_container_manager *manager, sinsp_container_info *container
 	if(parse_containerd(resp, container, tinfo))
 	{
 		return true;
+	}
+
+	libsinsp::async_cgroup::delayed_cgroup_key key(
+		container->m_id,
+		tinfo->get_cgroup("cpu"),
+		tinfo->get_cgroup("memory"));
+	libsinsp::async_cgroup::delayed_cgroup_value limits;
+	bool found_all = libsinsp::async_cgroup::get_cgroup_resource_limits(key, limits);
+
+	container->m_memory_limit = limits.m_memory_limit;
+	container->m_cpu_shares = limits.m_cpu_shares;
+	container->m_cpu_quota = limits.m_cpu_quota;
+	container->m_cpu_period = limits.m_cpu_period;
+
+	if(!found_all)
+	{
+		s_async_cgroups.lookup_delayed(key, limits, std::chrono::milliseconds(CGROUP_LOOKUP_DELAY_MS));
 	}
 
 	if(s_cri_extra_queries)
@@ -234,4 +260,9 @@ bool cri::resolve(sinsp_container_manager* manager, sinsp_threadinfo* tinfo, boo
 		manager->notify_new_container(container_info, tinfo->m_tid);
 	}
 	return true;
+}
+
+void cri::tick(sinsp_container_manager* manager)
+{
+	s_async_cgroups.tick(manager);
 }
