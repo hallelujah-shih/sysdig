@@ -21,10 +21,13 @@ limitations under the License.
 
 #include <cstdint>
 #include <map>
+#include <memory>
 #include <string>
 #include <vector>
 
 #include "json/json.h"
+
+class sinsp_evt;
 
 enum sinsp_container_type
 {
@@ -152,6 +155,9 @@ public:
 	bool is_pod_sandbox() const {
 		return m_is_pod_sandbox;
 	}
+
+	static sinsp_container_info from_container_json(sinsp_evt* evt);
+	static std::string get_id_from_json(sinsp_evt* evt);
 
 	std::string m_id;
 	sinsp_container_type m_type;

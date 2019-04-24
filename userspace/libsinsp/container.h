@@ -39,7 +39,7 @@ public:
 	bool remove_inactive_containers();
 	void add_container(const sinsp_container_info& container_info, sinsp_threadinfo *thread);
 	sinsp_container_info * get_container(const string &id);
-	void notify_new_container(const sinsp_container_info& container_info, int64_t tid);
+	void notify_new_container(const sinsp_container_info& container_info);
 	template<typename E> bool resolve_container_impl(sinsp_threadinfo* tinfo, bool query_os_for_missing_info);
 	template<typename E1, typename E2, typename... Args> bool resolve_container_impl(sinsp_threadinfo* tinfo, bool query_os_for_missing_info);
 	bool resolve_container(sinsp_threadinfo* tinfo, bool query_os_for_missing_info);
@@ -69,13 +69,15 @@ public:
 	void set_cri_socket_path(const std::string& path);
 	void set_cri_timeout(int64_t timeout_ms);
 	sinsp* get_inspector() { return m_inspector; }
+	std::shared_ptr<sinsp_threadinfo> get_container_tinfo(const std::string& container_id);
 private:
 	string container_to_json(const sinsp_container_info& container_info);
-	bool container_to_sinsp_event(const string& json, sinsp_evt* evt, int64_t tid=0);
+	bool container_to_sinsp_event(const string& json, sinsp_evt* evt, sinsp_threadinfo* tinfo);
 	string get_docker_env(const Json::Value &env_vars, const string &mti);
 
 	sinsp* m_inspector;
 	unordered_map<string, sinsp_container_info> m_containers;
+	unordered_map<string, shared_ptr<sinsp_threadinfo>> m_container_tinfo;
 	uint64_t m_last_flush_time_ns;
 	list<new_container_cb> m_new_callbacks;
 	list<remove_container_cb> m_remove_callbacks;
