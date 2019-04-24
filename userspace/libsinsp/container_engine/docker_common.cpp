@@ -42,6 +42,9 @@ docker_async_source::docker_async_source(uint64_t max_wait_ms, uint64_t ttl_ms, 
 
 docker_async_source::~docker_async_source()
 {
+	g_logger.format(sinsp_logger::SEV_DEBUG,
+			"docker_async: Source destructor");
+
 	free_docker_conn();
 }
 
@@ -51,6 +54,10 @@ void docker_async_source::run_impl()
 
 	while (dequeue_next_key(container_id))
 	{
+		g_logger.format(sinsp_logger::SEV_DEBUG,
+				"docker_async (%s): Source dequeued key",
+				container_id.c_str());
+
 		container_lookup_result res;
 
 		res.m_successful = true;
@@ -59,10 +66,15 @@ void docker_async_source::run_impl()
 
 		if(!parse_docker(container_id, &res.m_container_info))
 		{
-			g_logger.format(sinsp_logger::SEV_ERROR, "Failed to get Docker metadata for container %s",
+			g_logger.format(sinsp_logger::SEV_ERROR,
+					"docker_async (%s): Failed to get Docker metadata, returning successful=false",
 					container_id.c_str());
 			res.m_successful = false;
 		}
+
+		g_logger.format(sinsp_logger::SEV_DEBUG,
+				"docker_async (%s): Parse successful, storing value",
+				container_id.c_str());
 
 		// Return a result object either way, to ensure any
 		// new container callbacks are called.
@@ -74,6 +86,11 @@ void docker_async_source::set_top_tid(const std::string &container_id, sinsp_thr
 {
 	top_tid_table::accessor acc;
 
+	g_logger.format(sinsp_logger::SEV_DEBUG,
+			"docker_async (%s): Setting top tid %ld",
+			container_id.c_str(),
+			tinfo->m_tid);
+
 	m_top_tids.insert(acc, container_id);
 	acc->second = tinfo->m_tid;
 }
@@ -84,10 +101,16 @@ int64_t docker_async_source::get_top_tid(const std::string &container_id)
 
 	if(m_top_tids.find(cacc, container_id))
 	{
+		g_logger.format(sinsp_logger::SEV_DEBUG,
+				"docker_async (%s): Getting top tid %ld",
+				container_id.c_str(),
+				cacc->second);
 		return cacc->second;
 	}
 
-	g_logger.log("Did not find container id->tid mapping for in-progress container metadata lookup?", sinsp_logger::SEV_ERROR);
+	g_logger.format(sinsp_logger::SEV_ERROR,
+			"docker_async (%s): Did not find container id->tid mapping for in-progress container metadata lookup?",
+			container_id.c_str());
 	return 0;
 }
 
@@ -95,7 +118,14 @@ bool docker_async_source::pending_lookup(std::string &container_id)
 {
 	top_tid_table::const_accessor cacc;
 
-	return m_top_tids.find(cacc, container_id);
+	bool res = m_top_tids.find(cacc, container_id);
+
+	g_logger.format(sinsp_logger::SEV_DEBUG,
+			"docker_async (%s): pending_lookup returning %s",
+			container_id.c_str(),
+			(res ? "true" : "false"));
+
+	return res;
 }
 
 void docker_async_source::update_top_tid(std::string &container_id, sinsp_threadinfo *tinfo)
@@ -112,6 +142,10 @@ void docker_async_source::update_top_tid(std::string &container_id, sinsp_thread
 		// The top thread no longer exists. Starting with tinfo,
 		// walk the parent heirarchy to find the top thread in
 		// the same container.
+		g_logger.format(sinsp_logger::SEV_DEBUG,
+				"docker_async (%s): top tid %ld exited, finding new top tid",
+				container_id.c_str(),
+				top_tid);
 
 		sinsp_threadinfo::visitor_func_t visitor =
 		[&] (sinsp_threadinfo *ptinfo)
@@ -139,6 +173,11 @@ void docker_async_source::update_top_tid(std::string &container_id, sinsp_thread
 		top_tinfo = tinfo;
 		tinfo->traverse_parent_state(visitor);
 
+		g_logger.format(sinsp_logger::SEV_DEBUG,
+				"docker_async (%s): Found new top tid %ld",
+				container_id.c_str(),
+				top_tinfo->m_tid);
+
 		// At this point, top_tinfo should point to the top
 		// thread of those running in the container.
 		set_top_tid(container_id, top_tinfo);
@@ -163,6 +202,10 @@ void docker::parse_json_mounts(const Json::Value &mnt_obj, vector<sinsp_containe
 
 void docker_async_source::set_query_image_info(bool query_image_info)
 {
+	g_logger.format(sinsp_logger::SEV_DEBUG,
+			"docker_async: Setting query_image_info=%s",
+			(query_image_info ? "true" : "false"));
+
 	m_query_image_info = query_image_info;
 }
 
@@ -180,6 +223,8 @@ bool docker::resolve(sinsp_container_manager* manager, sinsp_threadinfo* tinfo, 
 
 	if(!g_docker_info_source)
 	{
+		g_logger.log("docker_async: Creating docker async source",
+			     sinsp_logger::SEV_DEBUG);
 		uint64_t max_wait_ms = 10000;
 		docker_async_source *src = new docker_async_source(docker_async_source::NO_WAIT_LOOKUP, max_wait_ms, manager->get_inspector());
 		g_docker_info_source.reset(src);
@@ -196,6 +241,10 @@ bool docker::resolve(sinsp_container_manager* manager, sinsp_threadinfo* tinfo, 
 		// image = incomplete is filled in. This may be
 		// overidden later once parse_docker_async completes.
 		sinsp_container_info container_info;
+
+		g_logger.format(sinsp_logger::SEV_DEBUG,
+				"docker_async (%s): No existing container info, creating initial stub info",
+				container_id.c_str());
 
 		container_info.m_type = CT_DOCKER;
 		container_info.m_id = container_id;
@@ -219,6 +268,10 @@ bool docker::resolve(sinsp_container_manager* manager, sinsp_threadinfo* tinfo, 
 	{
 		if(!g_docker_info_source->pending_lookup(container_id))
 		{
+			g_logger.format(sinsp_logger::SEV_DEBUG,
+					"docker_async (%s): Scheduling container info lookup",
+					container_id.c_str());
+
 			// give docker a chance to return metadata for this container
 			parse_docker_async(manager->get_inspector(), container_id, manager);
 
@@ -226,6 +279,10 @@ bool docker::resolve(sinsp_container_manager* manager, sinsp_threadinfo* tinfo, 
 		}
 		else
 		{
+			g_logger.format(sinsp_logger::SEV_DEBUG,
+					"docker_async (%s): Lookup in progress, updating top tid",
+					container_id.c_str());
+
 			g_docker_info_source->update_top_tid(container_id, tinfo);
 		}
 	}
@@ -241,6 +298,11 @@ void docker::parse_docker_async(sinsp *inspector, std::string &container_id, sin
 {
 	auto cb = [manager](const std::string &container_id, const container_lookup_result &res)
         {
+		g_logger.format(sinsp_logger::SEV_DEBUG,
+				"docker_async (%s): Source callback result successful=%s",
+				container_id.c_str(),
+				(res.m_successful ? "true" : "false"));
+
 		if(res.m_successful)
 		{
 			int64_t top_tid = docker::g_docker_info_source->get_top_tid(container_id);
@@ -253,7 +315,9 @@ void docker::parse_docker_async(sinsp *inspector, std::string &container_id, sin
 	if (g_docker_info_source->lookup(container_id, dummy, cb))
 	{
 		// This should *never* happen, as ttl is 0 (never wait)
-		g_logger.log("Unexpected immediate return from docker_info_source.lookup()", sinsp_logger::SEV_ERROR);
+		g_logger.format(sinsp_logger::SEV_ERROR,
+				"docker_async (%s): Unexpected immediate return from docker_info_source.lookup()",
+				container_id.c_str());
 	}
 }
 
@@ -261,9 +325,17 @@ bool docker_async_source::parse_docker(std::string &container_id, sinsp_containe
 {
 	string json;
 
+	g_logger.format(sinsp_logger::SEV_DEBUG,
+			"docker_async (%s): Looking up info for container",
+			container_id.c_str());
+
 	docker_response resp = get_docker(build_request("/containers/" + container_id + "/json"), json);
 	switch(resp) {
 		case docker_response::RESP_BAD_REQUEST:
+			g_logger.format(sinsp_logger::SEV_DEBUG,
+					"docker_async (%s): Initial url fetch failed, trying w/o api version",
+					container_id.c_str());
+
 			m_api_version = "";
 			json = "";
 			resp = get_docker(build_request("/containers/" + container_id + "/json"), json);
@@ -273,17 +345,31 @@ bool docker_async_source::parse_docker(std::string &container_id, sinsp_containe
 			}
 			/* FALLTHRU */
 		case docker_response::RESP_ERROR:
+			g_logger.format(sinsp_logger::SEV_DEBUG,
+					"docker_async (%s): Url fetch failed, returning false",
+					container_id.c_str());
+
 			return false;
 
 		case docker_response::RESP_OK:
 			break;
 	}
 
+	g_logger.format(sinsp_logger::SEV_DEBUG,
+			"docker_async (%s): Parsing containers response \"%s\"",
+			container_id.c_str(),
+			json.c_str());
+
 	Json::Value root;
 	Json::Reader reader;
 	bool parsingSuccessful = reader.parse(json, root);
 	if(!parsingSuccessful)
 	{
+		g_logger.format(sinsp_logger::SEV_ERROR,
+				"docker_async (%s): Could not parse json \"%s\", returning false",
+				container_id.c_str(),
+				json.c_str());
+
 		ASSERT(false);
 		return false;
 	}
@@ -328,9 +414,20 @@ bool docker_async_source::parse_docker(std::string &container_id, sinsp_containe
 	if(m_query_image_info && !container->m_imageid.empty() &&
 	   (no_name || container->m_imagedigest.empty() || (!container->m_imagedigest.empty() && container->m_imagetag.empty())))
 	{
+		g_logger.format(sinsp_logger::SEV_DEBUG,
+				"docker_async (%s) image (%s): Fetching image info",
+				container_id.c_str(),
+				container->m_imageid.c_str());
+
 		string img_json;
 		if(get_docker(build_request("/images/" + container->m_imageid + "/json?digests=1"), img_json) == docker_response::RESP_OK)
 		{
+			g_logger.format(sinsp_logger::SEV_DEBUG,
+					"docker_async (%s) image (%s): Image info fetch returned \"%s\"",
+					container_id.c_str(),
+					container->m_imageid.c_str(),
+					img_json.c_str());
+
 			Json::Value img_root;
 			if(reader.parse(img_json, img_root))
 			{
@@ -367,7 +464,23 @@ bool docker_async_source::parse_docker(std::string &container_id, sinsp_containe
 					}
 				}
 			}
+			else
+			{
+				g_logger.format(sinsp_logger::SEV_ERROR,
+						"docker_async (%s) image (%s): Could not parse json image info \"%s\"",
+						container_id.c_str(),
+						container->m_imageid.c_str(),
+						img_json.c_str());
+			}
 		}
+		else
+		{
+			g_logger.format(sinsp_logger::SEV_ERROR,
+					"docker_async (%s) image (%s): Could not fetch image info",
+					container_id.c_str(),
+					container->m_imageid.c_str());
+		}
+
 	}
 	if(container->m_imagetag.empty())
 	{
@@ -396,16 +509,34 @@ bool docker_async_source::parse_docker(std::string &container_id, sinsp_containe
 
 		if(strncmp(net_mode.c_str(), "container:", strlen("container:")) == 0)
 		{
-			std::string container_id = net_mode.substr(net_mode.find(":") + 1);
+			std::string secondary_container_id = net_mode.substr(net_mode.find(":") + 1);
 
 			sinsp_container_info pcnt;
-			pcnt.m_id = container_id;
+			pcnt.m_id = secondary_container_id;
 
 			// This is a *blocking* fetch of the
 			// secondary container, but we're in a
 			// separate thread so this is ok.
-			parse_docker(container_id, &pcnt);
-			container->m_container_ip = pcnt.m_container_ip;
+			g_logger.format(sinsp_logger::SEV_DEBUG,
+					"docker_async (%s), secondary (%s): Doing blocking fetch of secondary container",
+					container_id.c_str(),
+					secondary_container_id.c_str());
+
+			if (parse_docker(secondary_container_id, &pcnt))
+			{
+				g_logger.format(sinsp_logger::SEV_DEBUG,
+						"docker_async (%s), secondary (%s): Secondary fetch successful",
+						container_id.c_str(),
+						secondary_container_id.c_str());
+				container->m_container_ip = pcnt.m_container_ip;
+			}
+			else
+			{
+				g_logger.format(sinsp_logger::SEV_ERROR,
+						"docker_async (%s), secondary (%s): Secondary fetch failed",
+						container_id.c_str(),
+						secondary_container_id.c_str());
+			}
 		}
 	}
 	else
@@ -495,5 +626,9 @@ bool docker_async_source::parse_docker(std::string &container_id, sinsp_containe
 	sinsp_utils::find_env(container->m_sysdig_agent_conf, container->get_env(), "SYSDIG_AGENT_CONF");
 	// container->m_sysdig_agent_conf = get_docker_env(env_vars, "SYSDIG_AGENT_CONF");
 #endif
+
+	g_logger.format(sinsp_logger::SEV_DEBUG,
+			"docker_async (%s): parse_docker returning true",
+			container_id.c_str());
 	return true;
 }
